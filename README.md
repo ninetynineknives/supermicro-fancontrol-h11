@@ -89,7 +89,7 @@ sudoedit /etc/default/fan-daemon
 ```
 
 ```bash
-FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host BMC_ADDRESS --ipmi-user fanctl --ipmi-privilege ADMINISTRATOR"
+FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host BMC_ADDRESS --ipmi-user fanctl --ipmi-privilege ADMINISTRATOR --ipmi-temps"
 IPMI_PASSWORD=replace-with-the-fanctl-password
 ```
 
@@ -98,6 +98,10 @@ Administrator privilege by default. Supermicro OEM raw fan-control commands
 require that privilege on the H11SSL-i. If the BMC uses a different UDP port, add
 `--ipmi-port PORT` to `FAN_DAEMON_ARGS`. The service uses the same settings for
 its fail-safe command when it stops.
+
+When the daemon runs in a VM, also include `--ipmi-temps`. If the VM cannot
+access the host's `k10temp` CPU sensor, the daemon then uses the BMC CPU
+temperature as its required CPU reading.
 
 To isolate the CPU fan from GPU temperature, add the explicit
 `--decouple-gpu-zone0` option. This keeps CPU, storage, and other zone-0

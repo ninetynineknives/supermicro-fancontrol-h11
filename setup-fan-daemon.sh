@@ -64,7 +64,7 @@ install_config() {
     cat > "$CONFIG_FILE" << 'EOF'
 # Additional arguments for fan-daemon.py.
 # Example for an H11SSL-i VM with remote BMC access:
-# FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host 192.0.2.10 --ipmi-user fanctl --ipmi-privilege ADMINISTRATOR"
+# FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host 192.0.2.10 --ipmi-user fanctl --ipmi-privilege ADMINISTRATOR --ipmi-temps"
 # IPMI_PASSWORD=replace-with-the-fanctl-password
 FAN_DAEMON_ARGS=""
 EOF

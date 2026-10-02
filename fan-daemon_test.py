@@ -637,6 +637,16 @@ class TestSupermicroH13:
         temps = hw.get_temps()
         assert temps is None
 
+    def test_get_temps_uses_ipmi_cpu_fallback(self, hw: SupermicroH13) -> None:
+        ipmi_sensor = MagicMock()
+        ipmi_sensor.get.return_value = {"cpu_ipmi": (47.0,)}
+        hw._sensors = [*_make_mock_sensors(cpu=None, gpu=(65.0,)), ipmi_sensor]
+
+        temps = hw.get_temps()
+
+        assert temps is not None
+        assert temps["cpu"] == (47,)
+
     def test_get_temps_gpu_failure(self, hw: SupermicroH13) -> None:
         hw._sensors = _make_mock_sensors(cpu=(45.0,), gpu=None)
         temps = hw.get_temps()

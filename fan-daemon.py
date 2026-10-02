@@ -228,6 +228,12 @@ class SupermicroH13:
                 elif key not in result:
                     result[key] = None
 
+        # Prefer the local CPU sensor, but use the BMC reading when this daemon
+        # runs in a VM that cannot access the host's k10temp hwmon device.
+        if not result.get("cpu") and result.get("cpu_ipmi"):
+            result["cpu"] = result["cpu_ipmi"]
+            log.warning("Using IPMI CPU temperature because k10temp is unavailable")
+
         # CPU and GPU are required
         if not result.get("cpu"):
             log.error("Failed to read CPU temp")
