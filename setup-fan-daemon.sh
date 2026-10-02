@@ -64,7 +64,7 @@ install_config() {
     cat > "$CONFIG_FILE" << 'EOF'
 # Additional arguments for fan-daemon.py.
 # Example for an H11SSL-i VM with remote BMC access:
-# FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host 192.0.2.10 --ipmi-user fanctl"
+# FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host 192.0.2.10 --ipmi-user fanctl --ipmi-privilege ADMINISTRATOR"
 # IPMI_PASSWORD=replace-with-the-fanctl-password
 FAN_DAEMON_ARGS=""
 EOF
@@ -98,13 +98,13 @@ EnvironmentFile=-${CONFIG_FILE}
 #   --decouple-gpu-zone0               Do not let the GPU temp influence zone 0
 #   --speeds gpu-zone1=50:30,70:100    Custom GPU curve for zone 1
 #   --speeds gpu=70:80:5:60            With per-point hysteresis (5°C, 60s)
-ExecStart=/bin/sh -c 'exec /usr/bin/python3 /usr/local/bin/fan-daemon.py $FAN_DAEMON_ARGS'
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 /usr/local/bin/fan-daemon.py \$FAN_DAEMON_ARGS'
 
 Restart=on-failure
 RestartSec=5
 
 # Fail-safe: use the same local or remote IPMI configuration as the daemon.
-ExecStopPost=/bin/sh -c '/usr/bin/python3 /usr/local/bin/fan-daemon.py $FAN_DAEMON_ARGS --fail-safe'
+ExecStopPost=/bin/sh -c '/usr/bin/python3 /usr/local/bin/fan-daemon.py \$FAN_DAEMON_ARGS --fail-safe'
 
 User=root
 

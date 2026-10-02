@@ -77,7 +77,7 @@ installing the service:
 ```bash
 read -rs IPMI_PASSWORD
 export IPMI_PASSWORD
-ipmitool -I lanplus -H BMC_ADDRESS -U fanctl -E -L OPERATOR sensor
+ipmitool -I lanplus -H BMC_ADDRESS -U fanctl -E -L ADMINISTRATOR sensor
 ```
 
 The `-E` option reads `IPMI_PASSWORD` from the environment rather than exposing
@@ -89,12 +89,13 @@ sudoedit /etc/default/fan-daemon
 ```
 
 ```bash
-FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host BMC_ADDRESS --ipmi-user fanctl"
+FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host BMC_ADDRESS --ipmi-user fanctl --ipmi-privilege ADMINISTRATOR"
 IPMI_PASSWORD=replace-with-the-fanctl-password
 ```
 
-`--ipmi-host` selects encrypted `lanplus` automatically and requests Operator
-privilege by default. If the BMC uses a different UDP port, add
+`--ipmi-host` selects encrypted `lanplus` automatically and requests
+Administrator privilege by default. Supermicro OEM raw fan-control commands
+require that privilege on the H11SSL-i. If the BMC uses a different UDP port, add
 `--ipmi-port PORT` to `FAN_DAEMON_ARGS`. The service uses the same settings for
 its fail-safe command when it stops.
 

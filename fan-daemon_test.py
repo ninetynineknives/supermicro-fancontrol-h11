@@ -798,7 +798,7 @@ class TestConfigFromArgs:
         config = SupermicroH13.Config.from_args(argparser, args)
         assert config.zones == (0, 1)
 
-    def test_remote_ipmi_config_uses_lanplus_and_operator(self) -> None:
+    def test_remote_ipmi_config_uses_lanplus_and_administrator(self) -> None:
         import argparse
 
         argparser = argparse.ArgumentParser()
@@ -821,7 +821,7 @@ class TestConfigFromArgs:
             "-p",
             "623",
             "-L",
-            "OPERATOR",
+            "ADMINISTRATOR",
         ]
 
     def test_fan_daemon_config_from_args(self) -> None:

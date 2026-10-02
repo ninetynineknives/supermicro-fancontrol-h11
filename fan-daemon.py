@@ -71,7 +71,7 @@ class SupermicroH13:
         ipmi_host: str | None = None
         ipmi_user: str | None = None
         ipmi_port: int = 623
-        ipmi_privilege: str = "OPERATOR"
+        ipmi_privilege: str = "ADMINISTRATOR"
 
         # IPMI sensor name -> result_key
         # Keys that duplicate other sensors get _ipmi suffix
@@ -146,8 +146,8 @@ class SupermicroH13:
             _ = argparser.add_argument(
                 "--ipmi-privilege",
                 choices=("USER", "OPERATOR", "ADMINISTRATOR"),
-                default="OPERATOR",
-                help="BMC privilege for --ipmi-host (default: OPERATOR).",
+                default="ADMINISTRATOR",
+                help="BMC privilege for --ipmi-host (default: ADMINISTRATOR).",
             )
 
         @classmethod
