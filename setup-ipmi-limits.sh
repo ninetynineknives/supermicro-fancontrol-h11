@@ -78,8 +78,9 @@ set -e
 #
 # This prevents false alarms when fans spin down at idle
 #
-# H13SSL-N fan headers
-FANS="FAN1 FAN2 FAN3 FAN4 FANA FANB"
+# H11SSL-i has FAN1-5, FANA, and FANB; H13SSL-N omits FAN5. Missing sensors
+# are skipped, so this shared list is safe for both boards.
+FANS="FAN1 FAN2 FAN3 FAN4 FAN5 FANA FANB"
 echo "Setting fan thresholds..."
 for fan in $FANS; do
     ipmitool sensor get "$fan" >/dev/null 2>&1 || continue

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
@@ -22,6 +23,8 @@ _spec.loader.exec_module(_module)
 FanSpeed = _module.FanSpeed
 FanDaemon = _module.FanDaemon
 SupermicroH13 = _module.SupermicroH13
+SupermicroH11 = _module.SupermicroH11
+HardwareConfig = _module.HardwareConfig
 run_cmd = _module.run_cmd
 
 
@@ -88,6 +91,47 @@ class MockHardware:
 
 
 class TestFanSpeedConfigParse:
+    def test_h11_profile_keeps_default_fan_mappings(self) -> None:
+        parser = argparse.ArgumentParser()
+        HardwareConfig.add_args(parser)
+        FanSpeed.Config.add_args(parser)
+        h13_args = parser.parse_args([])
+        h11_args = parser.parse_args(["--board", "h11ssl-i"])
+        h13_config = FanSpeed.Config.from_args(parser, h13_args)
+        h11_config = FanSpeed.Config.from_args(parser, h11_args)
+
+        assert h11_config.speeds == h13_config.speeds
+
+    def test_decouple_gpu_zone0_is_opt_in(self) -> None:
+        parser = argparse.ArgumentParser()
+        HardwareConfig.add_args(parser)
+        FanSpeed.Config.add_args(parser)
+        args = parser.parse_args(["--board", "h11ssl-i", "--decouple-gpu-zone0"])
+        speed = FanSpeed.Config.from_args(parser, args).setup()
+
+        assert speed.get("gpu", 0, 0) is None
+        assert speed.get("gpu", 0, 1) is not None
+
+    def test_h11_board_selects_h11_hardware(self) -> None:
+        parser = argparse.ArgumentParser()
+        HardwareConfig.add_args(parser)
+        args = parser.parse_args(["--board", "h11ssl-i"])
+
+        with patch.object(SupermicroH11.Config, "setup") as setup:
+            _ = HardwareConfig.from_args(parser, args)
+
+        setup.assert_called_once()
+
+    def test_h11_hardware_uses_h11_ipmi_sensor_names(self) -> None:
+        parser = argparse.ArgumentParser()
+        HardwareConfig.add_args(parser)
+        args = parser.parse_args(["--board", "h11ssl-i", "--ipmi-temps"])
+        config = SupermicroH11.Config.from_args(parser, args)
+
+        assert config.ipmi_temps
+        assert "DIMMA1 Temp" in config.ipmi_sensors
+        assert "DIMMA~F Temp" not in config.ipmi_sensors
+
     def test_basic(self) -> None:
         _, mapping = FanSpeed.Config._parse_speeds("x=40:15,60:30,80:100")
         assert mapping == (
@@ -753,6 +797,32 @@ class TestConfigFromArgs:
         args = argparser.parse_args([])
         config = SupermicroH13.Config.from_args(argparser, args)
         assert config.zones == (0, 1)
+
+    def test_remote_ipmi_config_uses_lanplus_and_operator(self) -> None:
+        import argparse
+
+        argparser = argparse.ArgumentParser()
+        SupermicroH13.Config.add_args(argparser)
+        args = argparser.parse_args(
+            ["--ipmi-host", "192.0.2.10", "--ipmi-user", "fanctl"]
+        )
+        with patch.dict(_module.os.environ, {"IPMI_PASSWORD": "test"}):
+            config = SupermicroH13.Config.from_args(argparser, args)
+
+        assert config.ipmitool_command() == [
+            "ipmitool",
+            "-I",
+            "lanplus",
+            "-H",
+            "192.0.2.10",
+            "-U",
+            "fanctl",
+            "-E",
+            "-p",
+            "623",
+            "-L",
+            "OPERATOR",
+        ]
 
     def test_fan_daemon_config_from_args(self) -> None:
         import argparse

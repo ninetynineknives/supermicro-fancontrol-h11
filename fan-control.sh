@@ -12,9 +12,9 @@ Usage: $0 <zone> <percent>
        $0 <mode>
        $0 status
 
-Zones:
-  0   - FAN1-4 (CPU, case, exhaust)
-  1   - FANA-B (auxiliary/GPU)
+Zones (header membership is BMC/firmware-defined):
+  0   - Primary/CPU zone
+  1   - Auxiliary zone
   all - Both zones
 
 Modes:
@@ -85,8 +85,8 @@ set_zone_speed() {
 
 show_status() {
     echo "Mode: $(get_mode)"
-    echo "Zone 0 (FAN:1,2,3,4): $(get_zone_speed 0)%"
-    echo "Zone 1 (FAN:A,B): $(get_zone_speed 1)%"
+    echo "Zone 0: $(get_zone_speed 0)%"
+    echo "Zone 1: $(get_zone_speed 1)%"
 }
 
 set_zone() {

@@ -61,6 +61,72 @@ sudo ./setup-fan-daemon.sh install  # Or install-dev
 journalctl -u fan-daemon -f
 ```
 
+### H11SSL-i support
+
+The default profile remains the tested H13 implementation. For an H11SSL-i, use
+`--board h11ssl-i` in the service `ExecStart`. This selects the H11 hardware
+implementation, including its IPMI sensor names when `--ipmi-temps` is enabled.
+
+### Remote BMC access from a VM
+
+The daemon uses local `/dev/ipmi0` by default. A VM normally does not have that
+device, so configure encrypted IPMI-over-LAN instead. Create a restricted BMC
+user, permit UDP port 623 from only the VM's address, and confirm access before
+installing the service:
+
+```bash
+read -rs IPMI_PASSWORD
+export IPMI_PASSWORD
+ipmitool -I lanplus -H BMC_ADDRESS -U fanctl -E -L OPERATOR sensor
+```
+
+The `-E` option reads `IPMI_PASSWORD` from the environment rather than exposing
+it in the command line. For the service, create the root-only configuration
+file installed by `setup-fan-daemon.sh`:
+
+```bash
+sudoedit /etc/default/fan-daemon
+```
+
+```bash
+FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host BMC_ADDRESS --ipmi-user fanctl"
+IPMI_PASSWORD=replace-with-the-fanctl-password
+```
+
+`--ipmi-host` selects encrypted `lanplus` automatically and requests Operator
+privilege by default. If the BMC uses a different UDP port, add
+`--ipmi-port PORT` to `FAN_DAEMON_ARGS`. The service uses the same settings for
+its fail-safe command when it stops.
+
+To isolate the CPU fan from GPU temperature, add the explicit
+`--decouple-gpu-zone0` option. This keeps CPU, storage, and other zone-0
+temperature mappings intact, but removes the GPU zone-0 mapping:
+
+```bash
+sudo systemctl edit fan-daemon --full
+# Coupled default:
+# ExecStart=/usr/bin/python3 /usr/local/bin/fan-daemon.py --board h11ssl-i
+# Decoupled GPU/CPU fan behavior:
+# ExecStart=/usr/bin/python3 /usr/local/bin/fan-daemon.py --board h11ssl-i --decouple-gpu-zone0
+sudo systemctl daemon-reload
+sudo systemctl restart fan-daemon
+```
+
+Before installing the service, validate the BMC behavior on the actual board:
+
+```bash
+./fan-control.sh full
+./fan-control.sh 1 100  # only the fan connected to FANA should change
+./fan-control.sh 0 30   # verify the CPU fan responds as expected
+./fan-control.sh optimal
+```
+
+The H11 implementation uses the same vendor-specific raw fan commands as the
+H13 implementation. Do not use it if these checks do not produce the expected
+zone membership; return the BMC to `optimal` and investigate its fan
+configuration. Before enabling `--ipmi-temps`, compare its sensor names with
+the output of `ipmitool sensor`.
+
 ## Fan Daemon
 
 The `fan-daemon.py` script provides automatic temperature-based fan control. It

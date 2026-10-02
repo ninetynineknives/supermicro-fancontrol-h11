@@ -180,19 +180,27 @@ class Ipmitool:
     """IPMI temperature sensors via ipmitool."""
 
     _sensor_map: dict[str, str]
+    _command: tuple[str, ...]
 
-    def __init__(self, sensor_map: dict[str, str]) -> None:
-        """Initialize with sensor name to key mapping.
+    def __init__(
+        self,
+        sensor_map: dict[str, str],
+        command: list[str] | tuple[str, ...] = ("ipmitool",),
+    ) -> None:
+        """Initialize with sensor mapping and an ipmitool command prefix.
 
         Args:
             sensor_map: Mapping of IPMI sensor names to result keys.
                 e.g., {"CPU Temp": "cpu", "DIMMA~F Temp": "ram"}
+            command: Local or remote ipmitool command prefix, without its
+                subcommand. Defaults to local `ipmitool`.
         """
         self._sensor_map = sensor_map
+        self._command = tuple(command)
 
     def get(self) -> SensorResult:
         """Read temps from ipmitool sensor."""
-        out = run_cmd(["ipmitool", "sensor"])
+        out = run_cmd([*self._command, "sensor"])
         if out is None:
             log.error("Failed to run ipmitool sensor")
             keys = set(self._sensor_map.values())

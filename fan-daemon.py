@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import logging
+import os
 import re
 import signal
 import sys
@@ -55,7 +56,6 @@ class Hardware(Protocol):
     def set_fail_safe(self) -> bool: ...
 
 
-@final
 class SupermicroH13:
     """Hardware implementation for Supermicro H13-series motherboards."""
 
@@ -68,6 +68,10 @@ class SupermicroH13:
         ipmi_ready_timeout_seconds: float = 120.0
         ipmi_ready_retry_seconds: float = 5.0
         ipmi_temps: bool = False  # Use ipmitool for RAM/VRM temps
+        ipmi_host: str | None = None
+        ipmi_user: str | None = None
+        ipmi_port: int = 623
+        ipmi_privilege: str = "OPERATOR"
 
         # IPMI sensor name -> result_key
         # Keys that duplicate other sensors get _ipmi suffix
@@ -97,6 +101,26 @@ class SupermicroH13:
             """Build SupermicroH13 from this config."""
             return SupermicroH13(self)
 
+        def ipmitool_command(self) -> list[str]:
+            """Build a local or encrypted remote ipmitool command prefix."""
+            if self.ipmi_host is None:
+                return ["ipmitool"]
+            assert self.ipmi_user is not None
+            return [
+                "ipmitool",
+                "-I",
+                "lanplus",
+                "-H",
+                self.ipmi_host,
+                "-U",
+                self.ipmi_user,
+                "-E",
+                "-p",
+                str(self.ipmi_port),
+                "-L",
+                self.ipmi_privilege,
+            ]
+
         @classmethod
         def add_args(cls, argparser: argparse.ArgumentParser) -> None:
             """Add hardware arguments to parser."""
@@ -104,6 +128,26 @@ class SupermicroH13:
                 "--ipmi-temps",
                 action="store_true",
                 help="Read RAM/VRM temps via ipmitool (slower, more BMC traffic).",
+            )
+            _ = argparser.add_argument(
+                "--ipmi-host",
+                help="BMC hostname or address. Uses encrypted IPMI-over-LAN.",
+            )
+            _ = argparser.add_argument(
+                "--ipmi-user",
+                help="BMC user for --ipmi-host.",
+            )
+            _ = argparser.add_argument(
+                "--ipmi-port",
+                type=int,
+                default=623,
+                help="BMC UDP port (default: 623).",
+            )
+            _ = argparser.add_argument(
+                "--ipmi-privilege",
+                choices=("USER", "OPERATOR", "ADMINISTRATOR"),
+                default="OPERATOR",
+                help="BMC privilege for --ipmi-host (default: OPERATOR).",
             )
 
         @classmethod
@@ -113,12 +157,30 @@ class SupermicroH13:
             args: argparse.Namespace,
         ) -> SupermicroH13.Config:
             """Create Config from parsed arguments."""
-            del argparser  # unused
-            return cls(ipmi_temps=cast(bool, args.ipmi_temps))
+            ipmi_host = cast(str | None, args.ipmi_host)
+            ipmi_user = cast(str | None, args.ipmi_user)
+            if (ipmi_host is None) != (ipmi_user is None):
+                argparser.error("--ipmi-host and --ipmi-user must be used together")
+            ipmi_port = cast(int, args.ipmi_port)
+            if not 1 <= ipmi_port <= 65535:
+                argparser.error("--ipmi-port must be 1-65535")
+            if ipmi_host is not None and not os.environ.get("IPMI_PASSWORD"):
+                argparser.error(
+                    "IPMI_PASSWORD must be set when using --ipmi-host "
+                    "(it is passed to ipmitool with -E)"
+                )
+            return cls(
+                ipmi_temps=cast(bool, args.ipmi_temps),
+                ipmi_host=ipmi_host,
+                ipmi_user=ipmi_user,
+                ipmi_port=ipmi_port,
+                ipmi_privilege=cast(str, args.ipmi_privilege),
+            )
 
     def __init__(self, config: Config):
         self.config = config
         self._last_set_speeds: dict[int, int] = {}
+        self._ipmitool_command = config.ipmitool_command()
 
         # Initialize sensors (detection happens in constructors)
         self._sensors: list[sensors.Sensor] = [
@@ -128,7 +190,9 @@ class SupermicroH13:
             sensors.Nvmecli(),
         ]
         if config.ipmi_temps:
-            self._sensors.append(sensors.Ipmitool(config.ipmi_sensors))
+            self._sensors.append(
+                sensors.Ipmitool(config.ipmi_sensors, self._ipmitool_command)
+            )
 
     def initialize(self) -> bool:
         """Initialize hardware for manual fan control. Sets BMC to full mode.
@@ -185,7 +249,7 @@ class SupermicroH13:
         log.debug("IPMI set zone %d to %d%% (0x%02x)", zone, percent, percent)
         out = run_cmd(
             [
-                "ipmitool",
+                *self._ipmitool_command,
                 "raw",
                 "0x30",
                 "0x70",
@@ -216,7 +280,15 @@ class SupermicroH13:
     def _get_zone_speed(self, zone: int) -> int | None:
         """Get current fan zone speed from BMC."""
         out = run_cmd(
-            ["ipmitool", "raw", "0x30", "0x70", "0x66", "0x00", f"0x{zone:02x}"]
+            [
+                *self._ipmitool_command,
+                "raw",
+                "0x30",
+                "0x70",
+                "0x66",
+                "0x00",
+                f"0x{zone:02x}",
+            ]
         )
         if not out:
             return None
@@ -246,13 +318,78 @@ class SupermicroH13:
 
     def _set_full_mode(self) -> bool:
         """Ensure BMC is in full/manual fan mode."""
-        out = run_cmd(["ipmitool", "raw", "0x30", "0x45", "0x00"])
+        out = run_cmd([*self._ipmitool_command, "raw", "0x30", "0x45", "0x00"])
         if out is None or out.strip() != "01":
-            if run_cmd(["ipmitool", "raw", "0x30", "0x45", "0x01", "0x01"]) is None:
+            if (
+                run_cmd(
+                    [*self._ipmitool_command, "raw", "0x30", "0x45", "0x01", "0x01"]
+                )
+                is None
+            ):
                 log.error("Failed to set full fan mode")
                 return False
             time.sleep(self.config.ipmi_write_delay_seconds)
         return True
+
+
+@final
+class SupermicroH11(SupermicroH13):
+    """Hardware implementation for the Supermicro H11SSL-i."""
+
+    @dataclasses.dataclass(slots=True, kw_only=True)
+    class Config(SupermicroH13.Config):
+        """H11SSL-i hardware configuration."""
+
+        # These names are from an H11SSL-i SDR. BMC firmware can change SDR
+        # names, so compare `ipmitool sensor` before enabling --ipmi-temps.
+        ipmi_sensors: dict[str, str] = dataclasses.field(
+            default_factory=lambda: {
+                "CPU Temp": "cpu_ipmi",
+                "DIMMA1 Temp": "ram",
+                "DIMMB1 Temp": "ram",
+                "DIMMC1 Temp": "ram",
+                "DIMMD1 Temp": "ram",
+                "DIMME1 Temp": "ram",
+                "DIMMF1 Temp": "ram",
+                "DIMMG1 Temp": "ram",
+                "DIMMH1 Temp": "ram",
+                "VRMCpu Temp": "vrm_cpu",
+                "VRMSoc Temp": "vrm_soc",
+                "VRMABCD Temp": "vrm_vddio",
+                "VRMEFGH Temp": "vrm_vddio",
+                "System Temp": "system",
+                "Peripheral Temp": "peripheral",
+            }
+        )
+
+        def setup(self) -> SupermicroH11:
+            """Build SupermicroH11 from this config."""
+            return SupermicroH11(self)
+
+
+class HardwareConfig:
+    """Select a board-specific Hardware implementation."""
+
+    @staticmethod
+    def add_args(argparser: argparse.ArgumentParser) -> None:
+        """Add board-selection and shared hardware arguments."""
+        _ = argparser.add_argument(
+            "--board",
+            choices=("h13", "h11ssl-i"),
+            default="h13",
+            help="Board hardware profile (default: h13).",
+        )
+        SupermicroH13.Config.add_args(argparser)
+
+    @staticmethod
+    def from_args(
+        argparser: argparse.ArgumentParser,
+        args: argparse.Namespace,
+    ) -> Hardware:
+        """Create the Hardware implementation selected by --board."""
+        if cast(str, args.board) == "h11ssl-i":
+            return SupermicroH11.Config.from_args(argparser, args).setup()
+        return SupermicroH13.Config.from_args(argparser, args).setup()
 
 
 @final
@@ -265,6 +402,7 @@ class FanSpeed:
 
         hysteresis_celsius: float = 5.0
         hysteresis_seconds: float = 30.0
+        decouple_gpu_zone0: bool = False
 
         # (temp, speed, hyst_celsius, hyst_seconds) - None means use global default
         # Throttle temps: CPU 100°C, GPU 90°C, RAM 85°C, HDD 70°C, NVMe 85°C
@@ -373,6 +511,11 @@ class FanSpeed:
                 metavar="SPEC",
                 help="Mapping spec. Repeatable.",
             )
+            _ = argparser.add_argument(
+                "--decouple-gpu-zone0",
+                action="store_true",
+                help="Do not let GPU temperature control zone 0 (opt-in).",
+            )
 
         @classmethod
         def from_args(
@@ -384,7 +527,12 @@ class FanSpeed:
             config = cls(
                 hysteresis_celsius=cast(float, args.hysteresis_celsius),
                 hysteresis_seconds=cast(float, args.hysteresis_seconds),
+                decouple_gpu_zone0=cast(bool, args.decouple_gpu_zone0),
             )
+            if config.decouple_gpu_zone0:
+                # An exact None mapping prevents fallback to the default
+                # GPU/zone-0 curve, while retaining CPU/storage zone-0 curves.
+                config.speeds[("gpu", -1, 0)] = None
             for spec in cast(list[str], args.speeds or []):
                 try:
                     key, speeds = cls._parse_speeds(spec)
@@ -885,9 +1033,11 @@ Mapping format: DEVICE[N][-zone[M]]=TEMP:SPEED[:HYST_C[:HYST_S]],...
   Dropping requires: Temp < (threshold - HYST_C) for at least HYST_S seconds
 
   Examples:
+    --board h11ssl-i                     Select H11SSL-i hardware support
+    --decouple-gpu-zone0                 Keep GPU temperature out of zone 0
     --speeds gpu=50:15,85:100            All GPUs, all zones
     --speeds gpu-zone0=50:15,85:100      All GPUs, zone 0 only
-    --speeds gpu0-zone1=60:20,85:100     GPU #0, zone 1 only
+    --speeds gpu0-zone1=60:20,85:100     GPU #0's zone-1 contribution
     --speeds gpu=50:15:3,70:50:5         Custom temp hysteresis per point
     --speeds gpu=70:80:5:60              5C temp hyst, 60s time hyst
     --speeds gpu=70:80::60               Default temp hyst, 60s time hyst
@@ -898,8 +1048,13 @@ Mapping format: DEVICE[N][-zone[M]]=TEMP:SPEED[:HYST_C[:HYST_S]],...
 """,
     )
     FanSpeed.Config.add_args(argparser)
-    SupermicroH13.Config.add_args(argparser)
+    HardwareConfig.add_args(argparser)
     FanDaemon.Config.add_args(argparser)
+    _ = argparser.add_argument(
+        "--fail-safe",
+        action="store_true",
+        help="Set all configured fan zones to full speed, then exit.",
+    )
     _ = argparser.add_argument(
         "--log-level",
         type=str,
@@ -916,7 +1071,11 @@ Mapping format: DEVICE[N][-zone[M]]=TEMP:SPEED[:HYST_C[:HYST_S]],...
         format="%(levelname)s: %(message)s",
     )
 
-    hardware = SupermicroH13.Config.from_args(argparser, args).setup()
+    hardware = HardwareConfig.from_args(argparser, args)
+    if cast(bool, args.fail_safe):
+        if not hardware.set_fail_safe():
+            sys.exit(1)
+        return
     speed = FanSpeed.Config.from_args(argparser, args).setup()
     daemon = FanDaemon.Config.from_args(argparser, args).setup(
         hardware=hardware,

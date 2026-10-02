@@ -22,7 +22,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_NAME="fan-daemon"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+CONFIG_FILE="/etc/default/${SERVICE_NAME}"
 DAEMON_INSTALL_PATH="/usr/local/bin/fan-daemon.py"
+SENSORS_INSTALL_PATH="/usr/local/bin/sensors.py"
 
 usage() {
     echo "Usage: $0 {install|install-dev|uninstall|status}"
@@ -41,13 +43,33 @@ check_root() {
 install_daemon_copy() {
     rm -f "$DAEMON_INSTALL_PATH"
     install -m755 "$SCRIPT_DIR/fan-daemon.py" "$DAEMON_INSTALL_PATH"
+    install -m644 "$SCRIPT_DIR/sensors.py" "$SENSORS_INSTALL_PATH"
     echo "  Copied $DAEMON_INSTALL_PATH"
+    echo "  Copied $SENSORS_INSTALL_PATH"
 }
 
 install_daemon_symlink() {
     rm -f "$DAEMON_INSTALL_PATH"
+    rm -f "$SENSORS_INSTALL_PATH"
     ln -s "$SCRIPT_DIR/fan-daemon.py" "$DAEMON_INSTALL_PATH"
+    ln -s "$SCRIPT_DIR/sensors.py" "$SENSORS_INSTALL_PATH"
     echo "  Symlinked $DAEMON_INSTALL_PATH -> $SCRIPT_DIR/fan-daemon.py"
+    echo "  Symlinked $SENSORS_INSTALL_PATH -> $SCRIPT_DIR/sensors.py"
+}
+
+install_config() {
+    if [ -e "$CONFIG_FILE" ]; then
+        return
+    fi
+    cat > "$CONFIG_FILE" << 'EOF'
+# Additional arguments for fan-daemon.py.
+# Example for an H11SSL-i VM with remote BMC access:
+# FAN_DAEMON_ARGS="--board h11ssl-i --decouple-gpu-zone0 --ipmi-host 192.0.2.10 --ipmi-user fanctl"
+# IPMI_PASSWORD=replace-with-the-fanctl-password
+FAN_DAEMON_ARGS=""
+EOF
+    chmod 600 "$CONFIG_FILE"
+    echo "  Created $CONFIG_FILE"
 }
 
 install_service() {
@@ -65,23 +87,24 @@ After=network.target ${IPMI_SERVICES}
 
 [Service]
 Type=simple
+EnvironmentFile=-${CONFIG_FILE}
 
-# Add flags here. Run "fan-daemon.py --help" for options. Examples:
+# Set FAN_DAEMON_ARGS in ${CONFIG_FILE}. Run "fan-daemon.py --help" for options. Examples:
 #   --interval_seconds 10              Poll every 10 seconds (default: 5)
 #   --hysteresis_celsius 3             3°C temp hysteresis (default: 5)
 #   --hysteresis_seconds 60            60s time hysteresis (default: 30)
 #   --log-level DEBUG                  Verbose logging
+#   --board h11ssl-i                   H11SSL-i hardware support
+#   --decouple-gpu-zone0               Do not let the GPU temp influence zone 0
 #   --speeds gpu-zone1=50:30,70:100    Custom GPU curve for zone 1
 #   --speeds gpu=70:80:5:60            With per-point hysteresis (5°C, 60s)
-ExecStart=/usr/bin/python3 /usr/local/bin/fan-daemon.py
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 /usr/local/bin/fan-daemon.py $FAN_DAEMON_ARGS'
 
 Restart=on-failure
 RestartSec=5
 
-# Fail-safe: set fans to full if service stops unexpectedly
-ExecStopPost=/usr/bin/ipmitool raw 0x30 0x45 0x01 0x01
-ExecStopPost=/usr/bin/ipmitool raw 0x30 0x70 0x66 0x01 0x00 0x64
-ExecStopPost=/usr/bin/ipmitool raw 0x30 0x70 0x66 0x01 0x01 0x64
+# Fail-safe: use the same local or remote IPMI configuration as the daemon.
+ExecStopPost=/bin/sh -c '/usr/bin/python3 /usr/local/bin/fan-daemon.py $FAN_DAEMON_ARGS --fail-safe'
 
 User=root
 
@@ -113,6 +136,7 @@ do_install() {
     check_root
     echo "Installing fan-daemon..."
     install_daemon_copy
+    install_config
     install_service
 }
 
@@ -120,6 +144,7 @@ do_install_dev() {
     check_root
     echo "Installing fan-daemon (dev mode)..."
     install_daemon_symlink
+    install_config
     install_service
 }
 
@@ -148,6 +173,11 @@ do_uninstall() {
     if [ -e "$DAEMON_INSTALL_PATH" ] || [ -L "$DAEMON_INSTALL_PATH" ]; then
         rm "$DAEMON_INSTALL_PATH"
         echo "  Removed $DAEMON_INSTALL_PATH"
+    fi
+
+    if [ -e "$SENSORS_INSTALL_PATH" ]; then
+        rm "$SENSORS_INSTALL_PATH"
+        echo "  Removed $SENSORS_INSTALL_PATH"
     fi
 
     systemctl daemon-reload

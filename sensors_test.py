@@ -572,6 +572,20 @@ VRM2 Temp        | 44.000     | degrees C  | ok
             _ = sensor.get()
             mock.assert_called_once_with(["ipmitool", "sensor"])
 
+    def test_get_uses_remote_ipmitool_prefix(
+        self, sensor_map: dict[str, str]
+    ) -> None:
+        sensor = sensors.Ipmitool(
+            sensor_map,
+            ["ipmitool", "-I", "lanplus", "-H", "192.0.2.10", "-E"],
+        )
+        with patch.object(sensors, "run_cmd", return_value="") as mock:
+            _ = sensor.get()
+
+        mock.assert_called_once_with(
+            ["ipmitool", "-I", "lanplus", "-H", "192.0.2.10", "-E", "sensor"]
+        )
+
 
 class TestSensorProtocol:
     """Tests verifying sensors implement the Sensor protocol."""
